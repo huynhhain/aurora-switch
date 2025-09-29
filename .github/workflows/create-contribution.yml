@@ -51,7 +51,12 @@ jobs:
         id: parent
         run: |
           PARENT_REPO=$(gh repo view --json parent --jq '.parent.nameWithOwner')
+          if [ -z "$PARENT_REPO" ] || [ "$PARENT_REPO" == "null" ]; then
+            echo "❌ Это не форк! Укажите родительский репозиторий вручную."
+            exit 1
+          fi
           echo "parent_repo=${PARENT_REPO}" >> $GITHUB_OUTPUT
+          echo "✅ Родительский репозиторий: ${PARENT_REPO}"
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
       
@@ -62,9 +67,27 @@ jobs:
           BRANCH_NAME="auto/${{ inputs.commit_type }}-${TIMESTAMP}"
           echo "branch_name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
           git checkout -b ${BRANCH_NAME}
+          echo "✅ Создана ветка: ${BRANCH_NAME}"
+      
+      - name: Check if file exists and create if needed
+        run: |
+          TARGET_FILE="${{ inputs.target_file }}"
+          
+          # Проверяем существование файла
+          if [ ! -f "$TARGET_FILE" ]; then
+            echo "⚠️ Файл $TARGET_FILE не существует, создаем..."
+            # Создаем директории если нужно
+            mkdir -p "$(dirname "$TARGET_FILE")"
+            # Создаем файл с базовым содержимым
+            echo "// Auto-generated file" > "$TARGET_FILE"
+            echo "✅ Файл создан: $TARGET_FILE"
+          else
+            echo "✅ Файл существует: $TARGET_FILE"
+          fi
       
       - name: Generate changes
         run: |
+          TARGET_FILE="${{ inputs.target_file }}"
           COMMIT_MSG="${{ inputs.custom_message }}"
           
           # Если нет кастомного сообщения, генерируем автоматическое
@@ -72,48 +95,75 @@ jobs:
             case "${{ inputs.commit_type }}" in
               "docs")
                 COMMIT_MSG="Update documentation"
-                echo "// Documentation updated: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                echo "" >> "$TARGET_FILE"
+                echo "// Documentation updated: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "refactor")
                 COMMIT_MSG="Refactor code structure"
-                echo "// Code review: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                echo "" >> "$TARGET_FILE"
+                echo "// Code review: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "style")
                 COMMIT_MSG="Improve code formatting"
-                echo "" >> ${{ inputs.target_file }}
-                echo "// Formatting: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                echo "" >> "$TARGET_FILE"
+                echo "// Formatting: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "perf")
                 COMMIT_MSG="Performance improvements"
-                echo "// Performance check: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                echo "" >> "$TARGET_FILE"
+                echo "// Performance check: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "chore")
                 COMMIT_MSG="Update build configuration"
-                echo "// Build: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                echo "" >> "$TARGET_FILE"
+                echo "// Build: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "fix")
                 COMMIT_MSG="Bug fixes"
-                echo "// Fix applied: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                echo "" >> "$TARGET_FILE"
+                echo "// Fix applied: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "feat")
                 COMMIT_MSG="Add new features"
-                echo "// Feature: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                echo "" >> "$TARGET_FILE"
+                echo "// Feature: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
             esac
+          else
+            # Используем кастомное сообщение
+            echo "" >> "$TARGET_FILE"
+            echo "// $COMMIT_MSG: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
           fi
           
           echo "COMMIT_MSG=${COMMIT_MSG}" >> $GITHUB_ENV
+          echo "✅ Изменения внесены в файл: $TARGET_FILE"
+      
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "❌ Нет изменений для коммита"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Есть изменения для коммита"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
       
       - name: Commit changes
+        if: steps.check_changes.outputs.has_changes == 'true'
         run: |
           git add .
           git commit -m "${{ inputs.commit_type }}: ${COMMIT_MSG}"
+          echo "✅ Коммит создан"
       
       - name: Push to fork
+        if: steps.check_changes.outputs.has_changes == 'true'
         run: |
           git push origin ${{ steps.branch.outputs.branch_name }}
+          echo "✅ Изменения отправлены в форк"
       
       - name: Create Pull Request to parent
+        if: steps.check_changes.outputs.has_changes == 'true'
         id: create_pr
         run: |
           PR_URL=$(gh pr create \
@@ -136,10 +186,12 @@ jobs:
           *Создано автоматически через GitHub Actions*")
           
           echo "pr_url=${PR_URL}" >> $GITHUB_OUTPUT
+          echo "✅ Pull Request создан: ${PR_URL}"
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
       
-      - name: Summary
+      - name: Success Summary
+        if: steps.check_changes.outputs.has_changes == 'true'
         run: |
           echo "✅ Pull Request успешно создан!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -148,3 +200,11 @@ jobs:
           echo "- Тип: ${{ inputs.commit_type }}" >> $GITHUB_STEP_SUMMARY
           echo "- Сообщение: ${COMMIT_MSG}" >> $GITHUB_STEP_SUMMARY
           echo "- Родительский репозиторий: ${{ steps.parent.outputs.parent_repo }}" >> $GITHUB_STEP_SUMMARY
+      
+      - name: No changes warning
+        if: steps.check_changes.outputs.has_changes == 'false'
+        run: |
+          echo "⚠️ Нет изменений для коммита" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Файл ${{ inputs.target_file }} не был изменен." >> $GITHUB_STEP_SUMMARY
+          echo "Проверьте что файл существует и доступен для записи." >> $GITHUB_STEP_SUMMARY

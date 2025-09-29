@@ -1,4 +1,4 @@
-name: Auto-merge from any fork
+name: Auto-merge from forks
 
 on:
   pull_request_target:
@@ -7,18 +7,15 @@ on:
 jobs:
   auto-approve-and-merge:
     runs-on: ubuntu-latest
-    # Проверяем что PR пришел из форка
     if: github.event.pull_request.head.repo.fork == true
     
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
-      - name: Display PR info
+      - name: Display info
         run: |
-          echo "PR от: ${{ github.event.pull_request.user.login }}"
-          echo "Форк: ${{ github.event.pull_request.head.repo.full_name }}"
-          echo "Ветка: ${{ github.event.pull_request.head.ref }}"
+          echo "PR: #${{ github.event.pull_request.number }}"
+          echo "From: ${{ github.event.pull_request.user.login }}"
+          echo "Fork: ${{ github.event.pull_request.head.repo.full_name }}"
+          echo "Title: ${{ github.event.pull_request.title }}"
       
       - name: Wait for checks
         run: sleep 10
@@ -26,16 +23,24 @@ jobs:
       - name: Approve PR
         run: |
           gh pr review ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
             --approve \
-            --body "✅ Automatically approved from fork ${{ github.event.pull_request.head.repo.full_name }}"
+            --body "Automatically approved"
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
       
-      - name: Auto-merge PR
+      - name: Wait before merge
+        run: sleep 5
+      
+      - name: Merge PR
         run: |
           gh pr merge ${{ github.event.pull_request.number }} \
-            --squash \
-            --auto \
-            --delete-branch
+            --repo ${{ github.repository }} \
+            --squash
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+      
+      - name: Success
+        if: success()
+        run: |
+          echo "✅ PR #${{ github.event.pull_request.number }} merged successfully"

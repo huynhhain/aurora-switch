@@ -3,6 +3,11 @@ name: Manual contribution creator
 on:
   workflow_dispatch:
     inputs:
+      parent_repo:
+        description: 'Родительский репозиторий (owner/repo)'
+        required: true
+        default: 'huynhhain/aurora-switch'
+        type: string
       commit_type:
         description: 'Тип коммита'
         required: true
@@ -40,25 +45,17 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.PAT_TOKEN }}
       
       - name: Configure Git
         run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
       
-      - name: Get parent repository info
-        id: parent
+      - name: Display target info
         run: |
-          PARENT_REPO=$(gh repo view --json parent --jq '.parent.nameWithOwner')
-          if [ -z "$PARENT_REPO" ] || [ "$PARENT_REPO" == "null" ]; then
-            echo "❌ Это не форк! Укажите родительский репозиторий вручную."
-            exit 1
-          fi
-          echo "parent_repo=${PARENT_REPO}" >> $GITHUB_OUTPUT
-          echo "✅ Родительский репозиторий: ${PARENT_REPO}"
-        env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          echo "🎯 Целевой репозиторий: ${{ inputs.parent_repo }}"
+          echo "📝 Тип коммита: ${{ inputs.commit_type }}"
+          echo "📄 Файл: ${{ inputs.target_file }}"
       
       - name: Create new branch
         id: branch
@@ -90,84 +87,70 @@ jobs:
           TARGET_FILE="${{ inputs.target_file }}"
           COMMIT_MSG="${{ inputs.custom_message }}"
           
+          # Генерируем уникальный ID для гарантии изменений
+          UNIQUE_ID=$(date +%s%N | md5sum | head -c 8)
+          
           # Если нет кастомного сообщения, генерируем автоматическое
           if [ -z "$COMMIT_MSG" ]; then
             case "${{ inputs.commit_type }}" in
               "docs")
                 COMMIT_MSG="Update documentation"
-                echo "" >> "$TARGET_FILE"
-                echo "// Documentation updated: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "refactor")
                 COMMIT_MSG="Refactor code structure"
-                echo "" >> "$TARGET_FILE"
-                echo "// Code review: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "style")
                 COMMIT_MSG="Improve code formatting"
-                echo "" >> "$TARGET_FILE"
-                echo "// Formatting: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "perf")
                 COMMIT_MSG="Performance improvements"
-                echo "" >> "$TARGET_FILE"
-                echo "// Performance check: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "chore")
                 COMMIT_MSG="Update build configuration"
-                echo "" >> "$TARGET_FILE"
-                echo "// Build: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "fix")
                 COMMIT_MSG="Bug fixes"
-                echo "" >> "$TARGET_FILE"
-                echo "// Fix applied: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
               "feat")
                 COMMIT_MSG="Add new features"
-                echo "" >> "$TARGET_FILE"
-                echo "// Feature: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
                 ;;
             esac
-          else
-            # Используем кастомное сообщение
-            echo "" >> "$TARGET_FILE"
-            echo "// $COMMIT_MSG: $(date -u +%Y-%m-%d)" >> "$TARGET_FILE"
           fi
+          
+          # Добавляем изменения в файл с уникальным ID
+          echo "" >> "$TARGET_FILE"
+          echo "// ${{ inputs.commit_type }}: ${COMMIT_MSG} [${UNIQUE_ID}]" >> "$TARGET_FILE"
+          echo "// Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$TARGET_FILE"
           
           echo "COMMIT_MSG=${COMMIT_MSG}" >> $GITHUB_ENV
           echo "✅ Изменения внесены в файл: $TARGET_FILE"
       
-      - name: Check for changes
-        id: check_changes
+      - name: Verify changes exist
         run: |
-          if git diff --quiet && git diff --cached --quiet; then
-            echo "❌ Нет изменений для коммита"
-            echo "has_changes=false" >> $GITHUB_OUTPUT
+          if git diff --quiet; then
+            echo "❌ Нет изменений после модификации файла"
+            exit 1
           else
-            echo "✅ Есть изменения для коммита"
-            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "✅ Изменения обнаружены"
+            git diff --stat
           fi
       
       - name: Commit changes
-        if: steps.check_changes.outputs.has_changes == 'true'
         run: |
           git add .
           git commit -m "${{ inputs.commit_type }}: ${COMMIT_MSG}"
           echo "✅ Коммит создан"
       
       - name: Push to fork
-        if: steps.check_changes.outputs.has_changes == 'true'
         run: |
           git push origin ${{ steps.branch.outputs.branch_name }}
           echo "✅ Изменения отправлены в форк"
       
       - name: Create Pull Request to parent
-        if: steps.check_changes.outputs.has_changes == 'true'
         id: create_pr
         run: |
           PR_URL=$(gh pr create \
-            --repo ${{ steps.parent.outputs.parent_repo }} \
+            --repo ${{ inputs.parent_repo }} \
             --base main \
             --head ${{ github.repository_owner }}:${{ steps.branch.outputs.branch_name }} \
             --title "${{ inputs.commit_type }}: ${COMMIT_MSG}" \
@@ -181,6 +164,7 @@ jobs:
           - Файл: ${{ inputs.target_file }}
           - Автор: @${{ github.actor }}
           - Дата: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          - Форк: ${{ github.repository }}
           
           ---
           *Создано автоматически через GitHub Actions*")
@@ -191,20 +175,12 @@ jobs:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
       
       - name: Success Summary
-        if: steps.check_changes.outputs.has_changes == 'true'
         run: |
-          echo "✅ Pull Request успешно создан!" >> $GITHUB_STEP_SUMMARY
+          echo "# ✅ Pull Request успешно создан!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Детали:**" >> $GITHUB_STEP_SUMMARY
-          echo "- PR URL: ${{ steps.create_pr.outputs.pr_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Тип: ${{ inputs.commit_type }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Сообщение: ${COMMIT_MSG}" >> $GITHUB_STEP_SUMMARY
-          echo "- Родительский репозиторий: ${{ steps.parent.outputs.parent_repo }}" >> $GITHUB_STEP_SUMMARY
-      
-      - name: No changes warning
-        if: steps.check_changes.outputs.has_changes == 'false'
-        run: |
-          echo "⚠️ Нет изменений для коммита" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Файл ${{ inputs.target_file }} не был изменен." >> $GITHUB_STEP_SUMMARY
-          echo "Проверьте что файл существует и доступен для записи." >> $GITHUB_STEP_SUMMARY
+          echo "## Детали" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR URL:** ${{ steps.create_pr.outputs.pr_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Тип:** ${{ inputs.commit_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Сообщение:** ${COMMIT_MSG}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Целевой репозиторий:** ${{ inputs.parent_repo }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ветка:** ${{ steps.branch.outputs.branch_name }}" >> $GITHUB_STEP_SUMMARY

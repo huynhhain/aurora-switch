@@ -1,4 +1,4 @@
-name: Auto-merge contributions from any fork
+name: Auto-merge from forks
 
 on:
   pull_request_target:
@@ -13,30 +13,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       
-      - name: Display PR info
+      - name: Display info
         run: |
-          echo "PR from: ${{ github.event.pull_request.user.login }}"
-          echo "Fork: ${{ github.event.pull_request.head.repo.full_name }}"
-          echo "Branch: ${{ github.event.pull_request.head.ref }}"
+          echo "PR #${{ github.event.pull_request.number }}"
+          echo "From: ${{ github.event.pull_request.user.login }}"
       
-      - name: Wait for checks
-        run: sleep 10
+      - name: Update PR branch with base
+        run: |
+          gh pr checkout ${{ github.event.pull_request.number }}
+          git fetch origin main
+          git merge origin/main --no-edit || git merge origin/main --strategy-option=theirs
+          git push
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        continue-on-error: true
       
       - name: Approve PR
         run: |
           gh pr review ${{ github.event.pull_request.number }} \
             --approve \
-            --body "Automatically approved from fork"
+            --body "Auto-approved"
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
       
-      - name: Wait before merge
-        run: sleep 5
-      
-      - name: Merge PR immediately
+      - name: Merge PR with conflict resolution
         run: |
           gh pr merge ${{ github.event.pull_request.number }} \
             --squash \
             --delete-branch
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+      
+      - name: Success
+        run: |
+          echo "PR #${{ github.event.pull_request.number }} merged"

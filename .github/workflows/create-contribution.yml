@@ -51,6 +51,15 @@ jobs:
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
       
+      - name: Sync fork with parent
+        run: |
+          echo "Syncing fork with parent repository..."
+          git remote add upstream https://github.com/${{ inputs.parent_repo }}.git
+          git fetch upstream
+          git merge upstream/main --no-edit || true
+          git push origin main
+          echo "Fork synchronized"
+      
       - name: Display target info
         run: |
           echo "Target repository: ${{ inputs.parent_repo }}"

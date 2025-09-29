@@ -53,9 +53,9 @@ jobs:
       
       - name: Display target info
         run: |
-          echo "🎯 Target repository: ${{ inputs.parent_repo }}"
-          echo "📝 Commit type: ${{ inputs.commit_type }}"
-          echo "📄 File: ${{ inputs.target_file }}"
+          echo "Target repository: ${{ inputs.parent_repo }}"
+          echo "Commit type: ${{ inputs.commit_type }}"
+          echo "File: ${{ inputs.target_file }}"
       
       - name: Create new branch
         id: branch
@@ -64,22 +64,19 @@ jobs:
           BRANCH_NAME="auto/${{ inputs.commit_type }}-${TIMESTAMP}"
           echo "branch_name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
           git checkout -b ${BRANCH_NAME}
-          echo "✅ Branch created: ${BRANCH_NAME}"
+          echo "Branch created: ${BRANCH_NAME}"
       
       - name: Check if file exists and create if needed
         run: |
           TARGET_FILE="${{ inputs.target_file }}"
           
-          # Check if file exists
           if [ ! -f "$TARGET_FILE" ]; then
-            echo "⚠️ File $TARGET_FILE does not exist, creating..."
-            # Create directories if needed
+            echo "File $TARGET_FILE does not exist, creating..."
             mkdir -p "$(dirname "$TARGET_FILE")"
-            # Create file with basic content
             echo "// Auto-generated file" > "$TARGET_FILE"
-            echo "✅ File created: $TARGET_FILE"
+            echo "File created: $TARGET_FILE"
           else
-            echo "✅ File exists: $TARGET_FILE"
+            echo "File exists: $TARGET_FILE"
           fi
       
       - name: Generate changes
@@ -87,10 +84,72 @@ jobs:
           TARGET_FILE="${{ inputs.target_file }}"
           COMMIT_MSG="${{ inputs.custom_message }}"
           
-          # Generate unique ID to guarantee changes
           UNIQUE_ID=$(date +%s%N | md5sum | head -c 8)
           
-          # If no custom message, generate automatic one
           if [ -z "$COMMIT_MSG" ]; then
             case "${{ inputs.commit_type }}" in
-              "
+              "docs")
+                COMMIT_MSG="Update documentation"
+                ;;
+              "refactor")
+                COMMIT_MSG="Refactor code structure"
+                ;;
+              "style")
+                COMMIT_MSG="Improve code formatting"
+                ;;
+              "perf")
+                COMMIT_MSG="Performance improvements"
+                ;;
+              "chore")
+                COMMIT_MSG="Update build configuration"
+                ;;
+              "fix")
+                COMMIT_MSG="Bug fixes"
+                ;;
+              "feat")
+                COMMIT_MSG="Add new features"
+                ;;
+            esac
+          fi
+          
+          echo "" >> "$TARGET_FILE"
+          echo "// ${{ inputs.commit_type }}: ${COMMIT_MSG} [${UNIQUE_ID}]" >> "$TARGET_FILE"
+          echo "// Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$TARGET_FILE"
+          
+          echo "COMMIT_MSG=${COMMIT_MSG}" >> $GITHUB_ENV
+          echo "Changes applied to file: $TARGET_FILE"
+      
+      - name: Verify changes exist
+        run: |
+          if git diff --quiet; then
+            echo "No changes after file modification"
+            exit 1
+          else
+            echo "Changes detected"
+            git diff --stat
+          fi
+      
+      - name: Commit changes
+        run: |
+          git add .
+          git commit -m "${{ inputs.commit_type }}: ${COMMIT_MSG}"
+          echo "Commit created"
+      
+      - name: Push to fork
+        run: |
+          git push origin ${{ steps.branch.outputs.branch_name }}
+          echo "Changes pushed to fork"
+      
+      - name: Create Pull Request to parent
+        id: create_pr
+        run: |
+          PR_BODY="## Type of change
+          - [x] ${{ inputs.commit_type }}
+          
+          ## Description
+          ${COMMIT_MSG}
+          
+          ## Details
+          - File: ${{ inputs.target_file }}
+          - Author: @${{ github.actor }}
+          - Date: $(date -u '+%Y-%m-%

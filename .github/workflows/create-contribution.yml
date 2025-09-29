@@ -1,0 +1,150 @@
+name: Manual contribution creator
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_type:
+        description: 'Тип коммита'
+        required: true
+        default: 'docs'
+        type: choice
+        options:
+          - docs
+          - refactor
+          - style
+          - perf
+          - chore
+          - fix
+          - feat
+      target_file:
+        description: 'Файл для изменения'
+        required: true
+        default: 'Main.kt'
+        type: string
+      custom_message:
+        description: 'Кастомное сообщение (опционально)'
+        required: false
+        type: string
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
+      
+      - name: Configure Git
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+      
+      - name: Get parent repository info
+        id: parent
+        run: |
+          PARENT_REPO=$(gh repo view --json parent --jq '.parent.nameWithOwner')
+          echo "parent_repo=${PARENT_REPO}" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+      
+      - name: Create new branch
+        id: branch
+        run: |
+          TIMESTAMP=$(date +%s)
+          BRANCH_NAME="auto/${{ inputs.commit_type }}-${TIMESTAMP}"
+          echo "branch_name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          git checkout -b ${BRANCH_NAME}
+      
+      - name: Generate changes
+        run: |
+          COMMIT_MSG="${{ inputs.custom_message }}"
+          
+          # Если нет кастомного сообщения, генерируем автоматическое
+          if [ -z "$COMMIT_MSG" ]; then
+            case "${{ inputs.commit_type }}" in
+              "docs")
+                COMMIT_MSG="Update documentation"
+                echo "// Documentation updated: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                ;;
+              "refactor")
+                COMMIT_MSG="Refactor code structure"
+                echo "// Code review: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                ;;
+              "style")
+                COMMIT_MSG="Improve code formatting"
+                echo "" >> ${{ inputs.target_file }}
+                echo "// Formatting: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                ;;
+              "perf")
+                COMMIT_MSG="Performance improvements"
+                echo "// Performance check: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                ;;
+              "chore")
+                COMMIT_MSG="Update build configuration"
+                echo "// Build: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                ;;
+              "fix")
+                COMMIT_MSG="Bug fixes"
+                echo "// Fix applied: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                ;;
+              "feat")
+                COMMIT_MSG="Add new features"
+                echo "// Feature: $(date -u +%Y-%m-%d)" >> ${{ inputs.target_file }}
+                ;;
+            esac
+          fi
+          
+          echo "COMMIT_MSG=${COMMIT_MSG}" >> $GITHUB_ENV
+      
+      - name: Commit changes
+        run: |
+          git add .
+          git commit -m "${{ inputs.commit_type }}: ${COMMIT_MSG}"
+      
+      - name: Push to fork
+        run: |
+          git push origin ${{ steps.branch.outputs.branch_name }}
+      
+      - name: Create Pull Request to parent
+        id: create_pr
+        run: |
+          PR_URL=$(gh pr create \
+            --repo ${{ steps.parent.outputs.parent_repo }} \
+            --base main \
+            --head ${{ github.repository_owner }}:${{ steps.branch.outputs.branch_name }} \
+            --title "${{ inputs.commit_type }}: ${COMMIT_MSG}" \
+            --body "## Тип изменения
+          - [x] ${{ inputs.commit_type }}
+          
+          ## Описание
+          ${COMMIT_MSG}
+          
+          ## Детали
+          - Файл: ${{ inputs.target_file }}
+          - Автор: @${{ github.actor }}
+          - Дата: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          
+          ---
+          *Создано автоматически через GitHub Actions*")
+          
+          echo "pr_url=${PR_URL}" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+      
+      - name: Summary
+        run: |
+          echo "✅ Pull Request успешно создан!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Детали:**" >> $GITHUB_STEP_SUMMARY
+          echo "- PR URL: ${{ steps.create_pr.outputs.pr_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Тип: ${{ inputs.commit_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Сообщение: ${COMMIT_MSG}" >> $GITHUB_STEP_SUMMARY
+          echo "- Родительский репозиторий: ${{ steps.parent.outputs.parent_repo }}" >> $GITHUB_STEP_SUMMARY

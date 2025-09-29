@@ -1,0 +1,41 @@
+name: Auto-merge from any fork
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  auto-approve-and-merge:
+    runs-on: ubuntu-latest
+    # Проверяем что PR пришел из форка
+    if: github.event.pull_request.head.repo.fork == true
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Display PR info
+        run: |
+          echo "PR от: ${{ github.event.pull_request.user.login }}"
+          echo "Форк: ${{ github.event.pull_request.head.repo.full_name }}"
+          echo "Ветка: ${{ github.event.pull_request.head.ref }}"
+      
+      - name: Wait for checks
+        run: sleep 10
+      
+      - name: Approve PR
+        run: |
+          gh pr review ${{ github.event.pull_request.number }} \
+            --approve \
+            --body "✅ Automatically approved from fork ${{ github.event.pull_request.head.repo.full_name }}"
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+      
+      - name: Auto-merge PR
+        run: |
+          gh pr merge ${{ github.event.pull_request.number }} \
+            --squash \
+            --auto \
+            --delete-branch
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
